@@ -12,7 +12,7 @@ buildscript {
 
 ext {
   gradleVersion = '2.4-rc-1'
-  jogampVer   = '2.2.1'
+  jogampVer   = '2.2.1' //2.3.1
   joglJars = [
       "jogl-all-${jogampVer}-natives-linux-i586",
       "jogl-all-${jogampVer}-natives-linux-amd64",
@@ -58,7 +58,7 @@ task populateCommitProperty << {
 	def defaultConfig = file('jsettlers.graphics.swing/resources/defaultConfig.prp')
 	def props = new Properties()
 	props.load(  new FileReader( defaultConfig )  )
-	props.setProperty( 'commit_info', cmd("git rev-parse --short HEAD") )
+	props.setProperty( 'COMMIT_INFO', cmd('git rev-parse --short HEAD') )
 	def writer = new FileWriter( defaultConfig )
 	try {
 		props.store( writer, 'Default Settings' )
@@ -67,6 +67,73 @@ task populateCommitProperty << {
 	finally {
 		writer.close()
 	}
+}
+
+task createTexturesJavac(type: JavaCompile) {
+	classpath = files('jsettlers.common/build')
+	targetCompatibility '1.7'
+	sourceCompatibility '1.7'
+	destinationDir = file("jsettlers.common/build/.buildScripts")
+	dependencyCacheDir file('jsettlers.common/build/dependency-cache')
+}
+buildScripts.source("jsettlers.common/build")
+buildScripts.source("jsettlers.common/src")
+buildScripts.source("jsettlers.graphics/src")
+buildScripts.source("go.graphics/src")
+
+task createTextures << {
+	println 'Warning: createTextures is currently ineffective and requires rework.'
+	file('jsettlers.common/build/.buildScripts').mkdirs()
+//	createTexturesJavac.execute()
+	ant.taskdef(
+		name: "createTextures",
+		classname: 'jsettlers.common.texturegeneration.TextureCompiler',
+		classpath: 'jsettlers.graphics/bin'
+	)
+    ant.createTextures( resourceDirectory: "jsettlers.common/resources", genDirectory: "jsettlers.common/gen" )
+}
+
+task buildResources(type: Copy) {
+	description 'Build the assets directory for android.'
+	from( 'jsettlers.common/resources' ){
+		exclude 'cache/**', 'logs/**', 'save/**'
+	}
+	into 'jsettlers.main.android/assets'
+}
+
+task buildImagesJavac(type: JavaCompile) {
+	classpath = files('jsettlers.common/build')
+	targetCompatibility '1.7'
+	sourceCompatibility '1.7'
+	destinationDir = file("jsettlers.graphics.androidui/build/.buildScripts")
+	dependencyCacheDir file('jsettlers.common/build/dependency-cache')
+}
+buildScripts.source("jsettlers.graphics.androidui/build") //this contains jsettlers.graphics.androidui.AndroidUiImageGenerator
+buildScripts.source("jsettlers.graphics.swing/src")
+buildScripts.source("jsettlers.graphics/src")
+buildScripts.source("jsettlers.common/src")
+buildScripts.source("jsettlers.common/gen")
+buildScripts.source("go.graphics/src")
+
+task buildImages << {
+	description 'Builds the android image files needed for the menu'
+	file('jsettlers.graphics.androidui/build/.buildScripts').mkdirs()
+	buildImagesJavac.execute()
+	copy {
+        from 'jsettlers.graphics.swing/src/jsettlers/graphics/swing/resources/defaultConfig.prp'
+        into 'jsettlers.graphics.androidui/build/.buildScripts/jsettlers/graphics/swing/resources/defaultConfig.prp'
+    }
+	ant.taskdef(
+		name: "exportGraphics",
+		classname: 'jsettlers.graphics.androidui.AndroidUiImageGenerator',
+		classpath: 'jsettlers.graphics.androidui/build/.buildScripts/'
+	)
+    ant.exportGraphics(
+		destinationDirectory='./res/drawable-mdpi'
+		listOutputDirectory='./gen'
+		listOutputClass='jsettlers.graphics.androidui.Graphics'
+		configFile='../jsettlers.main.swing/config.prp'
+    )
 }
 
 subprojects { subproject ->
@@ -110,8 +177,6 @@ project('jsettlers.main.swing') {
     compile project(":jsettlers.logic")
     compile project(":jsettlers.graphics.swing")
   }
-
-  rootProject.tasks.populateCommitProperty.execute()
 
   jar {
     baseName = project.name
@@ -158,7 +223,12 @@ project('jsettlers.mapcreator') {
 
 
 project('jsettlers.common') {
-  sourceSets.main.java.srcDirs = ["src","gen"]
+	sourceSets.main.java.srcDirs = ["src","gen"]
+
+	tasks.compileJava << {
+		rootProject.tasks.populateCommitProperty.execute()
+		rootProject.tasks.createTextures.execute()
+	}
 }
 
 
@@ -203,6 +273,100 @@ project('go.graphics.nativegl') {
     compile "org.jogamp.gluegen:gluegen-rt-main:${jogampVer}"
     compile "org.jogamp.jogl:jogl-all-main:${jogampVer}"
   }
+/*
+  Previous ant build:
+  headers.ant:	Builds the native headers.
+-<project name="build.headers" default="build">
+-    <property name="javah.out" location="." />
+-    <property name="javah.src" location="../src" />
+-    <property name="javah.go.src" location="../../go.graphics/src" />
+-
+-    <!-- = = = = = = = = = = = = = = = = =
+-          macrodef: javah          
+-         = = = = = = = = = = = = = = = = = -->
+-    <macrodef name="javah">
+-        <attribute name="classdefinition" default="" />
+-        <attribute name="to" default="." />
+-        <attribute name="headerfilename" default="" />
+-        <sequential>
+-            <antcall target="javah">
+-                <param name="classpath" value="@{classdefinition}" />
+-                <param name="to" location="@{to}" />
+-                <param name="headerfilename" value="@{headerfilename}" />
+-            </antcall>
+-        </sequential>
+-    </macrodef>
+-
+-    <!-- - - - - - - - - - - - - - - - - - 
+-          target: javah                      
+-         - - - - - - - - - - - - - - - - - -->
+-    <target name="javah" depends="javah.vars,javah.checkchanges" unless="nochanges">
+-        <echo message="generating jni header for ${classpath}" />
+-
+-        <mkdir dir=".javah-tmp" />
+-        <javac srcdir="${javah.src}:${javah.go.src}" destdir=".javah-tmp" listfiles="yes">
+-            <include name="${classpath_with_slash}.java" />
+-        </javac>
+-        <echo>javah -jni -o ${headerfile} -classpath .javah-tmp -force ${classpath}
+-			</echo>
+-        <exec executable="javah" failifexecutionfails="true" failonerror="true">
+-            <arg value="-jni" />
+-            <arg value="-o" />
+-            <arg path="${headerfile}" />
+-            <arg value="-classpath" />
+-            <arg path=".javah-tmp" />
+-            <arg value="-force" />
+-            <arg value="${classpath}" />
+-        </exec>
+-        <!--<delete dir=".javah-tmp" />-->
+-    </target>
+-
+-    <!-- - - - - - - - - - - - - - - - - - 
+-          target: javah.vars                      
+-         - - - - - - - - - - - - - - - - - -->
+-    <target name="javah.vars">
+-        <propertyregex property="classpath_with_slash" input="${classpath}" regexp="\." replace="/" global="true" />
+-        <propertyregex property="classpath_with__" input="${classpath}" regexp="\." replace="_" global="true" />
+-
+-        <if>
+-            <equals arg1="${headerfilename}" arg2="" trim="true" />
+-            <then>
+-                <propertyregex override="true" property="headerfilename" input="${classpath}" regexp="^(\w*\.)*(\w+)$" replace="\2.h" />
+-                <echo message="Header file name defaulting to ${headerfilename} for class ${classpath}" />
+-            </then>
+-        </if>
+-        <property name="headerfile" location="${to}/${headerfilename}" />
+-    </target>
+-
+-
+-    <!-- - - - - - - - - - - - - - - - - - 
+-          target: javah.checkchanges                      
+-         - - - - - - - - - - - - - - - - - -->
+-    <target name="javah.checkchanges">
+-        <uptodate property="nochanges" srcfile="${javah.src}/${classpath_with_slash}.java" targetfile="${headerfile}" />
+-    </target>
+-
+-
+-	<!-- ================================= 
+-          target: ant-contrib.load              
+-         ================================= -->
+-	<target name="ant-contrib.load" depends="" description="Initializes and loads ant contrib">
+-
+-		<taskdef resource="net/sf/antcontrib/antlib.xml">
+-		</taskdef>
+-
+-		<path id="bin">
+-			<pathelement path="${build.base}/bin"/>
+-		</path>
+-
+-	</target>
+-    
+-    <target name="build" depends="ant-contrib.load">
+-        <javah classdefinition="go.graphics.nativegl.NativeAreaWindow" to="${javah.out}" />
+-        <javah classdefinition="go.graphics.nativegl.NativeGLWrapper" to="${javah.out}" />
+-    </target>
+-</project>
+*/
 }
 
 
@@ -215,17 +379,21 @@ project('go.graphics.swing') {
 }
 
 
-//TODO, have a full fat gradle build file in the anddroid app that
+
+//TODO, have a full fat gradle build file in the android app that
 //is compatible with the new IDEA based Android Studio
 //must have this project as a parent.
 
 
 //project('jsettlers.graphics.androidui') {
-//  dependencies {
-//    compile project(":jsettlers.common")
-//    compile project(":jsettlers.graphics")
-//    compile project(":go.graphics.android")
+//	dependencies {
+//  	compile project(":jsettlers.common")
+//    	compile project(":jsettlers.graphics")
+//    	compile project(":go.graphics.android")
 //  }
+//	tasks.processResources << {
+//		rootProject.tasks.buildImages.execute()
+//	}
 //}
 
 
@@ -234,6 +402,9 @@ project('go.graphics.swing') {
 //    compile project(":jsettlers.logic")
 //    compile project(":jsettlers.graphics.androidui")
 //  }
+//	tasks.processResources << {
+//		rootProject.tasks.buildResources.execute();
+//	}
 //}
 
 
@@ -252,3 +423,347 @@ project('jsettlers.tests') {
     testCompile fileTree(dir: 'libs', include: '*.jar')
   }
 }
+
+
+/*
+Build application:
+  
+build.ant (above projects):
+<project default="buildAll" name="Build script of of JSettlers" >
+
+	<target name="buildSwing">
+		<ant antfile="jsettlers.main.swing/build/buildSwing.ant" useNativeBasedir="true" inheritAll="false" target="cleanBuildSwing" />
+	</target>
+	
+	<target name="buildDedicatedServer">
+		<ant antfile="jsettlers.network/build/buildDedicatedServer.ant" useNativeBasedir="true" inheritAll="false" target="buildDedicatedServer" />
+	</target>
+
+	<target name="runUnitTests">
+		<ant antfile="jsettlers.tests/build/build.ant" useNativeBasedir="true" inheritAll="false" target="unitTests" />
+		<ant antfile="jsettlers.tests/build/build.ant" useNativeBasedir="true" inheritAll="false" target="unitTests.network" />
+	</target>
+	
+	<target name="buildAll" depends="runUnitTests,buildSwing,buildDedicatedServer" />
+</project>
+
+//Also reference by the travis build:
+buildDedicatedServer.ant:
+-<project default="buildDedicatedServer" basedir="../../">
+-
+-	<target name="buildDedicatedServer">
+-		<ant antfile="jsettlers.network/build/build.ant" useNativeBasedir="true" inheritAll="false" target="build" />
+-
+-		<jar destfile="target/server/DedicatedJSettlersServer.jar">
+-			<manifest>
+-				<attribute name="Main-Class" value="jsettlers.network.server.DedicatedServerApp" />
+-				<attribute name="Class-Path" value="." />
+-			</manifest>
+-			<fileset dir="jsettlers.network/bin" />
+-		</jar>
+-	</target>
+-</project>
+  
+  /*
+//Also reference by the travis build:
+buildSwing.ant:
+-<project default="cleanBuildSwing" name="Build script of Swing Version of JSettlers" basedir="../../">
+-
+-	<!-- set global properties for this build -->
+-	<property name="swingTarget" location="target" />
+-	<property name="targetLocation" location="${swingTarget}/swing" />
+-	<property name="targetResources" location="${targetLocation}/JSettlers/resources" />
+-	<property name="targetLibFolderName" value="libs" />
+-	<property name="targetLibs" location="${targetLocation}/JSettlers/${targetLibFolderName}" />
+-
+-	<property name="targetZip" location="${swingTarget}/JSettlers.zip" />
+-	<property name="targetTar" location="${swingTarget}/JSettlers.tar.bz2" />
+-
+-
+-	<property name="sourceResources" location="jsettlers.common/resources" />
+-	<property name="sourceLibs" location="go.graphics.swing/libs" />
+-
+-
+-	<!-- define targets -->
+-
+-	<target name="createSwingJar" depends="clean,copyLibs">
+-		<ant antfile="jsettlers.main.swing/build/build.ant" useNativeBasedir="true" inheritAll="false" target="build" />
+-
+-		<jar destfile="${targetLocation}/JSettlers/JSettlers.jar">
+-			<manifest>
+-				<attribute name="Main-Class" value="jsettlers.main.swing.SwingManagedJSettlers" />
+-				<attribute name="Class-Path" value=". ${targetLibFolderName}/gluegen-rt.jar ${targetLibFolderName}/jogl-all.jar" />
+-			</manifest>
+-			<fileset dir="jsettlers.main.swing/bin" />
+-			<fileset dir="go.graphics/bin" />
+-			<fileset dir="jsettlers.common/bin" />
+-			<fileset dir="jsettlers.logic/bin" />
+-			<fileset dir="jsettlers.graphics/bin" />
+-			<fileset dir="jsettlers.network/bin" />
+-			<fileset dir="jsettlers.graphics.swing/bin" />
+-			<fileset dir="go.graphics.swing/bin" />
+-		</jar>
+-	</target>
+-
+-
+-	<target name="copySwingResources">
+-		<delete dir="${targetResources}" />
+-
+-		<copy todir="${targetResources}/buildings">
+-			<fileset dir="${sourceResources}/buildings" />
+-		</copy>
+-		<copy todir="${targetResources}/images">
+-			<fileset dir="${sourceResources}/images" />
+-		</copy>
+-		<copy todir="${targetResources}/localization">
+-			<fileset dir="${sourceResources}/localization" />
+-		</copy>
+-		<copy todir="${targetResources}/maps">
+-			<fileset dir="${sourceResources}/maps">
+-				<exclude name="/testmaps/**" />
+-				<exclude name="testmaps" />
+-			</fileset>
+-		</copy>
+-	</target>
+-
+-
+-	<target name="buildSwingBundles" depends="clean, createSwingJar,createMapCreatorJar,copySwingResources">
+-		<delete file="${targetZip}" />
+-		<delete file="${targetTar}" />
+-
+-		<zip destfile="${targetZip}" basedir="${targetLocation}" />
+-		<tar destfile="${targetTar}" longfile="gnu" compression="bzip2">
+-			<tarfileset dir="${targetLocation}">
+-				<include name="**" />
+-			</tarfileset>
+-		</tar>
+-	</target>
+-
+-
+-	<target name="createMapCreatorJar" depends="clean,copyLibs">
+-		<ant antfile="jsettlers.mapcreator/build/buildMapCreator.ant" useNativeBasedir="true" inheritAll="false" target="createMapCreatorJar" />
+-	</target>
+-
+-
+-	<target name="copyLibs" depends="clean">
+-		<copy todir="${targetLibs}">
+-			<fileset dir="${sourceLibs}" />
+-		</copy>
+-	</target>
+-
+-
+-	<target name="cleanBuildSwing" depends="buildSwingBundles" />
+-
+-	<target name="clean">
+-		<delete dir="${swingTarget}" />
+-	</target>
+-</project>
+  
+buildMapCreator.ant:
+-<project default="createMapCreatorJar" name="Create runnable jar of the JSettlers MapCreator" basedir="../../">
+-
+-	<target name="createMapCreatorJar">
+-		<ant antfile="jsettlers.mapcreator/build/build.ant" useNativeBasedir="true" inheritAll="false" target="build" />
+-		
+-		<jar destfile="target/swing/JSettlers/MapCreator.jar">
+-			<manifest>
+-				<attribute name="Main-Class" value="jsettlers.mapcreator.main.MapCreatorApp" />
+-				<attribute name="Class-Path" value=". libs/gluegen-rt.jar libs/jogl-all.jar" />
+-			</manifest>
+-			<fileset dir="jsettlers.mapcreator/bin" />
+-			<fileset dir="jsettlers.common/bin" />
+-			<fileset dir="jsettlers.graphics/bin" />
+-			<fileset dir="go.graphics/bin" />
+-			<fileset dir="go.graphics.swing/bin" />
+-			<fileset dir="jsettlers.main.swing/bin" />
+-			<fileset dir="jsettlers.logic/bin" />
+-			<fileset dir="jsettlers.network/bin" />
+-			<fileset dir="jsettlers.graphics.swing/bin" />
+-		</jar>
+-	</target>
+-</project>
+  
+  jsettlers.mapcreator/build/build.ant: (not autogenerated?)
+  -<project basedir=".." default="build" name="jsettlers.mapcreator">
+-	<property environment="env" />
+-	<property name="ECLIPSE_HOME" value="../../../luna64/" />
+-	<property name="go.graphics.location" value="../go.graphics" />
+-	<property name="go.graphics.swing.location" value="../go.graphics.swing" />
+-	<property name="jsettlers.common.location" value="../jsettlers.common" />
+-	<property name="jsettlers.graphics.location" value="../jsettlers.graphics" />
+-	<property name="jsettlers.graphics.swing.location" value="../jsettlers.graphics.swing" />
+-	<property name="jsettlers.network.location" value="../jsettlers.network" />
+-	<property name="jsettlers.logic.location" value="../jsettlers.logic" />
+-	<property name="jsettlers.main.swing.location" value="../jsettlers.main.swing" />
+-	<property name="debuglevel" value="source,lines,vars" />
+-
+-	<path id="jsettlers.common.classpath">
+-		<pathelement location="${jsettlers.common.location}/bin" />
+-	</path>
+-	<path id="go.graphics.classpath">
+-		<pathelement location="${go.graphics.location}/bin" />
+-	</path>
+-	<path id="jsettlers.graphics.classpath">
+-		<pathelement location="${jsettlers.graphics.location}/bin" />
+-		<path refid="jsettlers.common.classpath" />
+-		<path refid="go.graphics.classpath" />
+-	</path>
+-	<path id="go.graphics.swing.classpath">
+-		<pathelement location="${go.graphics.swing.location}/bin" />
+-		<path refid="go.graphics.classpath" />
+-		<pathelement location="${go.graphics.swing.location}/libs/gluegen-rt.jar" />
+-		<pathelement location="${go.graphics.swing.location}/libs/jogl-all.jar" />
+-	</path>
+-	<path id="jsettlers.network.classpath">
+-		<pathelement location="${jsettlers.network.location}/bin" />
+-	</path>
+-	<path id="jsettlers.logic.classpath">
+-		<pathelement location="${jsettlers.logic.location}/bin" />
+-		<path refid="jsettlers.graphics.classpath" />
+-		<path refid="jsettlers.common.classpath" />
+-		<path refid="jsettlers.network.classpath" />
+-	</path>
+-	<path id="jsettlers.graphics.swing.classpath">
+-		<pathelement location="${jsettlers.graphics.swing.location}/bin" />
+-		<path refid="go.graphics.classpath" />
+-		<path refid="go.graphics.swing.classpath" />
+-		<path refid="jsettlers.common.classpath" />
+-		<path refid="jsettlers.graphics.classpath" />
+-	</path>
+-	<path id="jsettlers.main.swing.classpath">
+-		<pathelement location="${jsettlers.main.swing.location}/bin" />
+-		<path refid="go.graphics.classpath" />
+-		<path refid="jsettlers.common.classpath" />
+-		<path refid="jsettlers.logic.classpath" />
+-		<path refid="jsettlers.graphics.classpath" />
+-		<path refid="jsettlers.graphics.swing.classpath" />
+-		<path refid="go.graphics.swing.classpath" />
+-		<path refid="jsettlers.network.classpath" />
+-	</path>
+-	<path id="jsettlers.mapcreator.classpath">
+-		<pathelement location="bin" />
+-		<path refid="jsettlers.common.classpath" />
+-		<path refid="jsettlers.graphics.classpath" />
+-		<path refid="go.graphics.classpath" />
+-		<path refid="go.graphics.swing.classpath" />
+-		<path refid="jsettlers.main.swing.classpath" />
+-		<path refid="jsettlers.logic.classpath" />
+-		<path refid="jsettlers.graphics.swing.classpath" />
+-	</path>
+-	<target name="init">
+-		<mkdir dir="bin" />
+-		<copy includeemptydirs="false" todir="bin">
+-			<fileset dir="src">
+-				<exclude name="**
+/
+*.java" />
+-			</fileset>
+-		</copy>
+-	</target>
+-	<target name="clean">
+-		<delete dir="bin" />
+-	</target>
+-	<target depends="clean" name="cleanall">
+-		<ant antfile="build/build.ant" dir="${go.graphics.location}"
+-			inheritAll="false" target="clean" />
+-		<ant antfile="build/build.ant" dir="${go.graphics.swing.location}"
+-			inheritAll="false" target="clean" />
+-		<ant antfile="build/build.ant" dir="${jsettlers.common.location}"
+-			inheritAll="false" target="clean" />
+-		<ant antfile="build/build.ant" dir="${jsettlers.graphics.location}"
+-			inheritAll="false" target="clean" />
+-		<ant antfile="build/build.ant" dir="${jsettlers.graphics.swing.location}"
+-			inheritAll="false" target="clean" />
+-		<ant antfile="build/build.ant" dir="${jsettlers.network.location}"
+-			inheritAll="false" target="clean" />
+-		<ant antfile="build/build.ant" dir="${jsettlers.logic.location}"
+-			inheritAll="false" target="clean" />
+-		<ant antfile="build/build.ant" dir="${jsettlers.main.swing.location}"
+-			inheritAll="false" target="clean" />
+-	</target>
+-	<target depends="build-subprojects,build-project" name="build" />
+-	<target name="build-subprojects">
+-		<ant antfile="build/build.ant" dir="${go.graphics.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-		<ant antfile="build/build.ant" dir="${go.graphics.swing.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-		<ant antfile="build/build.ant" dir="${jsettlers.common.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-		<ant antfile="build/build.ant" dir="${jsettlers.graphics.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-		<ant antfile="build/build.ant" dir="${jsettlers.graphics.swing.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-		<ant antfile="build/build.ant" dir="${jsettlers.network.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-		<ant antfile="build/build.ant" dir="${jsettlers.logic.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-		<ant antfile="build/build.ant" dir="${jsettlers.main.swing.location}"
+-			inheritAll="false" target="build-project">
+-			<propertyset>
+-				<propertyref name="build.compiler" />
+-			</propertyset>
+-		</ant>
+-	</target>
+-	<target depends="init" name="build-project">
+-		<echo message="${ant.project.name}: ${ant.file}" />
+-		<javac debug="true" debuglevel="${debuglevel}" destdir="bin"
+-			includeantruntime="false">
+-			<src path="src" />
+-			<classpath refid="jsettlers.mapcreator.classpath" />
+-		</javac>
+-	</target>
+-	<target
+-		description="Build all projects which reference this project. Useful to propagate changes."
+-		name="build-refprojects" />
+-	<target description="copy Eclipse compiler jars to ant lib directory"
+-		name="init-eclipse-compiler">
+-		<copy todir="${ant.library.dir}">
+-			<fileset dir="${ECLIPSE_HOME}/plugins" includes="org.eclipse.jdt.core_*.jar" />
+-		</copy>
+-		<unzip dest="${ant.library.dir}">
+-			<patternset includes="jdtCompilerAdapter.jar" />
+-			<fileset dir="${ECLIPSE_HOME}/plugins" includes="org.eclipse.jdt.core_*.jar" />
+-		</unzip>
+-	</target>
+-	<target description="compile project with Eclipse compiler"
+-		name="build-eclipse-compiler">
+-		<property name="build.compiler" value="org.eclipse.jdt.core.JDTCompilerAdapter" />
+-		<antcall target="build" />
+-	</target>
+-	<target name="MapCreatorApp">
+-		<java classname="jsettlers.mapcreator.main.MapCreatorApp"
+-			failonerror="true" fork="yes">
+-			<classpath refid="jsettlers.mapcreator.classpath" />
+-		</java>
+-	</target>
+-</project>
+  
+*/

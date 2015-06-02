@@ -18,6 +18,12 @@ import java.util.Arrays;
 public final class TextureMap {
 	private TextureMap() {}
 
+	/**
+	 * TODO see jsettlers.common.texturegeneration.TextureCompiler
+	 * @param name
+	 * @return
+	 */
+	@Deprecated
 	public static int getIndex(String name) {
 		int arrindex = Arrays.binarySearch(names, name);
 		if (arrindex < 0) {

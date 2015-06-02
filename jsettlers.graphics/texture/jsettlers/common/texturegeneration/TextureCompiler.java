@@ -24,10 +24,12 @@ import java.util.Collections;
 import java.util.Hashtable;
 
 /**
- * This program compiles all textures into the needed format for graphics
- * 
+ * TODO: requires refactoring see {@link #closeTextureIndex() getComponentAt}
+ * <p>This program compiles all textures into the needed format for graphics
+ *
  * @author michael
  */
+@Deprecated
 public class TextureCompiler implements Runnable, TextureIndex {
 
 	private DataOutputStream textureIndexOut;
@@ -55,7 +57,7 @@ public class TextureCompiler implements Runnable, TextureIndex {
 		if (args.length < 3) {
 			throw new IllegalArgumentException("Usage: compiler <intput dir> <gen dir>");
 		}
-		
+
 		new TextureCompiler(new File(args[1]), new File(args[2])).run();
 	}
 
@@ -67,9 +69,9 @@ public class TextureCompiler implements Runnable, TextureIndex {
 		if (resourceDirectory == null) {
 			throw new RuntimeException("please use resourceDirectory=\"...\"");
 		}
-		
+
 		genDirectory.mkdirs();
-		
+
 		openTextureIndex();
 
 		File rawDirectory = new File(getResourceDirectory(), "textures_raw");
@@ -124,6 +126,11 @@ public class TextureCompiler implements Runnable, TextureIndex {
 		System.out.println("Opened texture index");
 	}
 
+	/**
+     * TODO this should just generate a property file listing of images that TextureMap can pickup rather embedding the list in a generated class
+     * which creates spaghetti build.
+	 * @throws IOException
+	 */
 	private void closeTextureIndex() throws IOException {
 		ArrayList<String> sortedIndexes = new ArrayList<String>(
 				imageIndexes.keySet());
